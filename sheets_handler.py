@@ -28,7 +28,7 @@ def _get_worksheet():
 
 def write_expense(expense: Expense) -> int:
     try:
-        ws = _get_worksheet("Expenses")
+        ws = _get_worksheet()
         col_c = ws.col_values(3)  # coluna C (Date)
         next_row = len(col_c) + 1
 
