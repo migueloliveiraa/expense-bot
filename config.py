@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 class Settings(BaseSettings):
     TELEGRAM_TOKEN: str
@@ -7,9 +6,7 @@ class Settings(BaseSettings):
     SPREADSHEET_ID: str
     LOG_LEVEL: str = "INFO"
 
-    # Credenciais Google: ficheiro local (dev) ou JSON em string (produção)
-    GOOGLE_CREDENTIALS_PATH: str = "credentials.json"
-    GOOGLE_CREDENTIALS_JSON: Optional[str] = None  # conteúdo do JSON como string
+    GOOGLE_CREDENTIALS_JSON: str
 
     class Config:
         env_file = ".env"

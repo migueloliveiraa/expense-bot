@@ -16,17 +16,9 @@ _worksheet = None
 def _get_worksheet():
     global _worksheet
     if _worksheet is None:
-        if settings.GOOGLE_CREDENTIALS_JSON:
-            # Produção: credenciais passadas como variável de ambiente
-            import json
-            info = json.loads(settings.GOOGLE_CREDENTIALS_JSON)
-            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-        else:
-            # Desenvolvimento: ficheiro local
-            creds = Credentials.from_service_account_file(
-                settings.GOOGLE_CREDENTIALS_PATH,
-                scopes=SCOPES
-            )
+        import json
+        info = json.loads(settings.GOOGLE_CREDENTIALS_JSON)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
         client = gspread.authorize(creds)
         sheet = client.open_by_key(settings.SPREADSHEET_ID)
         _worksheet = sheet.worksheet("Expenses")
