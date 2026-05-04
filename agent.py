@@ -2,7 +2,7 @@ import json
 import anthropic
 from datetime import datetime
 from loguru import logger
-from models import Expense, Category
+from models import Expense, Category, Income, IncomeSource
 from config import settings
 
 client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -63,20 +63,66 @@ TOOLS = [
                 },
             }
         }
+    },
+    {
+        "name": "register_income",
+        "description": "Regista ou atualiza o valor de uma fonte de income num mês. Usa quando o utilizador menciona que recebeu salário, subsídio, ofertas, side hustle, etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "enum": [s.value for s in IncomeSource],
+                    "description": "Fonte do income"
+                },
+                "amount": {
+                    "type": "number",
+                    "description": "Valor recebido em euros"
+                },
+                "month": {
+                    "type": "integer",
+                    "description": "Mês (1-12). Por defeito o mês atual."
+                },
+                "year": {
+                    "type": "integer",
+                    "description": "Ano. Por defeito o ano atual."
+                }
+            },
+            "required": ["source", "amount"]
+        }
+    },
+    {
+        "name": "query_income",
+        "description": "Consulta o income registado num mês. Usa quando o utilizador pergunta quanto recebeu, qual o balanço do mês (income vs despesas), ou quer ver o breakdown de income.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "month": {
+                    "type": "integer",
+                    "description": "Mês (1-12). Por defeito o mês atual."
+                },
+                "year": {
+                    "type": "integer",
+                    "description": "Ano. Por defeito o ano atual."
+                }
+            }
+        }
     }
 ]
 
 
 def _build_system_prompt() -> str:
     today = datetime.now()
-    return f"""És um assistente de controlo de despesas pessoais.
+    return f"""És um assistente de controlo de despesas e income pessoais.
 Respondes sempre no mesmo idioma que o utilizador escreve.
 
-Tens duas ferramentas:
+Tens quatro ferramentas:
 1. register_expense — quando o utilizador descreve uma compra ou despesa
 2. query_expenses — quando o utilizador pergunta sobre os seus gastos ou histórico
+3. register_income — quando o utilizador menciona que recebeu dinheiro (salário, subsídio, ofertas, side hustle, etc.)
+4. query_income — quando o utilizador pergunta quanto recebeu ou quer ver o balanço do mês
 
-Se a mensagem não for uma despesa nem uma consulta, responde naturalmente sem usar ferramentas.
+Se a mensagem não for uma despesa, income, nem uma consulta, responde naturalmente sem usar ferramentas.
 
 Hoje é {today.strftime("%d/%m/%Y")} ({today.strftime("%A")}). Para datas relativas:
 - "hoje" → {today.strftime("%d/%m/%Y")}
@@ -101,12 +147,25 @@ Regras de categoria:
 - Viagens/hotel/voos/férias → Holidays
 - Qualquer coisa sem categoria clara → Miscellaneous
 
+Regras de income source:
+- Salário/ordenado → Salary
+- Prenda/oferta em dinheiro → Gifts
+- Freelance/trabalho extra/side hustle → Side Hustle
+- Subsídio de alimentação/refeição → Subsidio
+- Cartão refeição/meal card → Meal Card
+- Saldo transportado do mês anterior → CarryOver
+- Ajuste/reconciliação → Ajuste de Reconciliação
+
 Ao responder a consultas de despesas:
 - Usa SEMPRE os campos "total" e "by_category" do resultado da ferramenta — nunca somes os valores tu próprio
 - Apresenta os totais de forma clara e organizada
 - Usa formatação Markdown (negrito, listas)
 - Indica o período consultado
-- Se relevante, mostra o breakdown por categoria"""
+- Se relevante, mostra o breakdown por categoria
+
+Ao responder a consultas de income ou balanço:
+- Usa os campos "total" e "by_source" do resultado da ferramenta
+- Para balanço (income vs despesas), chama query_income e query_expenses separadamente e mostra: income total, despesas total, e saldo (income - despesas)"""
 
 
 def _build_expense_from_tool(data: dict) -> Expense:
@@ -134,8 +193,9 @@ def run_agent(user_message: str, history: list | None = None) -> dict:
       {"type": "expense", "expense": Expense}  — para mostrar confirmação
       {"type": "text", "text": str}             — resposta direta ao utilizador
     """
-    from sheets_handler import read_expenses
+    from sheets_handler import read_expenses, write_income, read_income
 
+    today = datetime.now()
     messages = list(history) if history else []
     messages.append({"role": "user", "content": user_message})
     logger.info(f"Agent started: {user_message}")
@@ -182,6 +242,41 @@ def run_agent(user_message: str, history: list | None = None) -> dict:
                     year=filters.get("year"),
                     category=filters.get("category"),
                 )
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(data, ensure_ascii=False),
+                })
+
+            if block.name == "register_income":
+                inp = block.input
+                month = inp.get("month") or today.month
+                year = inp.get("year") or today.year
+                income = Income(
+                    month=month,
+                    year=year,
+                    source=inp["source"],
+                    amount=inp["amount"],
+                )
+                logger.info(f"Income registered: {income.source.value} €{income.amount} ({month}/{year})")
+                write_income(income)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps({
+                        "ok": True,
+                        "source": income.source.value,
+                        "amount": income.amount,
+                        "month": month,
+                        "year": year,
+                    }),
+                })
+
+            if block.name == "query_income":
+                inp = block.input
+                month = inp.get("month") or today.month
+                logger.info(f"Querying income: month={month}")
+                data = read_income(month=month)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,

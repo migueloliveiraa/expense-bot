@@ -2,7 +2,7 @@ import gspread
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from loguru import logger
-from models import Expense
+from models import Expense, Income, IncomeSource
 from config import settings
 
 SCOPES = [
@@ -10,19 +10,42 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+MONTH_TAB = {
+    1: "JAN", 2: "FEB", 3: "MAR", 4: "APR",
+    5: "MAY", 6: "JUN", 7: "JUL", 8: "AUG",
+    9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC",
+}
+
+INCOME_ROW = {
+    IncomeSource.SALARY:    15,
+    IncomeSource.GIFTS:     16,
+    IncomeSource.SIDE_HUSTLE: 17,
+    IncomeSource.SUBSIDIO:  18,
+    IncomeSource.MEAL_CARD: 19,
+    IncomeSource.CARRYOVER: 20,
+    IncomeSource.AJUSTE:    21,
+}
+
 _worksheet = None
+_spreadsheet = None
+
+
+def _get_spreadsheet():
+    global _spreadsheet
+    if _spreadsheet is None:
+        import json
+        info = json.loads(settings.GOOGLE_CREDENTIALS_JSON)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+        client = gspread.authorize(creds)
+        _spreadsheet = client.open_by_key(settings.SPREADSHEET_ID)
+        logger.info("Google Sheets connection established")
+    return _spreadsheet
 
 
 def _get_worksheet():
     global _worksheet
     if _worksheet is None:
-        import json
-        info = json.loads(settings.GOOGLE_CREDENTIALS_JSON)
-        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(settings.SPREADSHEET_ID)
-        _worksheet = sheet.worksheet("Expenses")
-        logger.info("Google Sheets connection established")
+        _worksheet = _get_spreadsheet().worksheet("Expenses")
     return _worksheet
 
 
@@ -117,4 +140,32 @@ def read_expenses(month: int = None, year: int = None, category: str = None) -> 
         "count": len(expenses),
         "by_category": dict(sorted(by_category.items(), key=lambda x: x[1], reverse=True)),
         "expenses": expenses,
+    }
+
+
+def write_income(income: Income) -> None:
+    tab = MONTH_TAB[income.month]
+    row = INCOME_ROW[income.source]
+    ws = _get_spreadsheet().worksheet(tab)
+    ws.update(f"F{row}", [[income.amount]], value_input_option="USER_ENTERED")
+    logger.info(f"Income written: {income.source.value} = €{income.amount} → {tab}!F{row}")
+
+
+def read_income(month: int) -> dict:
+    tab = MONTH_TAB[month]
+    ws = _get_spreadsheet().worksheet(tab)
+    rows = ws.batch_get([f"F{r}" for r in INCOME_ROW.values()])
+
+    by_source = {}
+    for source, row_vals in zip(INCOME_ROW.keys(), rows):
+        raw = row_vals[0][0] if row_vals and row_vals[0] else "0"
+        amount = _parse_amount(raw) or 0.0
+        by_source[source.value] = amount
+
+    total = round(sum(by_source.values()), 2)
+    logger.info(f"read_income: month={month} total={total}")
+    return {
+        "month": tab,
+        "total": total,
+        "by_source": {k: v for k, v in by_source.items() if v > 0},
     }

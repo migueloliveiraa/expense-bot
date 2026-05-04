@@ -26,6 +26,37 @@ class Category(str, Enum):
     AJUSTE = "Ajuste de Reconciliação"
 
 
+class IncomeSource(str, Enum):
+    SALARY = "Salary"
+    GIFTS = "Gifts"
+    SIDE_HUSTLE = "Side Hustle"
+    SUBSIDIO = "Subsidio"
+    MEAL_CARD = "Meal Card"
+    CARRYOVER = "CarryOver"
+    AJUSTE = "Ajuste de Reconciliação"
+
+
+class Income(BaseModel):
+    month: int
+    year: int
+    source: IncomeSource
+    amount: float
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError("Amount must be positive")
+        return round(v, 2)
+
+    @field_validator("month")
+    @classmethod
+    def month_valid(cls, v):
+        if not 1 <= v <= 12:
+            raise ValueError("Month must be between 1 and 12")
+        return v
+
+
 class Expense(BaseModel):
     date: Optional[datetime] = None
     description: str
