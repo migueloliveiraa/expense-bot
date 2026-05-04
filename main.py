@@ -74,6 +74,13 @@ def _category_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+_HISTORY_MAX = 4  # 2 exchanges × 2 messages each
+
+
+def _trim_history(history: list) -> list:
+    return history[-_HISTORY_MAX:]
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.message.from_user.id
@@ -84,14 +91,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action("typing")
 
     try:
-        result = run_agent(user_message)
+        history = context.user_data.get("history", [])
+        result = run_agent(user_message, history=history)
 
         if result["type"] == "text":
             await update.message.reply_text(result["text"], parse_mode="Markdown")
+            context.user_data["history"] = _trim_history(
+                history + [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": result["text"]},
+                ]
+            )
             return
 
         expense = result["expense"]
         context.user_data["pending_expense"] = expense
+        context.user_data["pending_user_message"] = user_message
 
         await update.message.reply_text(
             _confirmation_text(expense),
@@ -202,14 +217,28 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode="Markdown"
             )
             logger.info(f"Expense confirmed and written to row {row}: {expense.description}")
+            pending_user_message = context.user_data.pop("pending_user_message", None)
+            if pending_user_message is not None:
+                assistant_summary = (
+                    f"Despesa registada: {expense.description} €{expense.amount:.2f} "
+                    f"({expense.category.value}, {expense.date.strftime('%d/%m/%Y')})"
+                )
+                context.user_data["history"] = _trim_history(
+                    context.user_data.get("history", []) + [
+                        {"role": "user", "content": pending_user_message},
+                        {"role": "assistant", "content": assistant_summary},
+                    ]
+                )
         except Exception as e:
             logger.exception(f"Error writing expense: {e}")
+            context.user_data.pop("pending_user_message", None)
             await query.edit_message_text(
                 "❌ Ocorreu um erro ao registar a despesa. Tenta novamente."
             )
     else:
         await query.edit_message_text("❌ *Despesa cancelada.*", parse_mode="Markdown")
         logger.info(f"Expense cancelled: {expense.description}")
+        context.user_data.pop("pending_user_message", None)
 
 
 def main():

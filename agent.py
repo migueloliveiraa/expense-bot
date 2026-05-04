@@ -127,7 +127,7 @@ def _build_expense_from_tool(data: dict) -> Expense:
     )
 
 
-def run_agent(user_message: str) -> dict:
+def run_agent(user_message: str, history: list | None = None) -> dict:
     """
     Corre o loop do agente.
     Retorna:
@@ -136,7 +136,8 @@ def run_agent(user_message: str) -> dict:
     """
     from sheets_handler import read_expenses
 
-    messages = [{"role": "user", "content": user_message}]
+    messages = list(history) if history else []
+    messages.append({"role": "user", "content": user_message})
     logger.info(f"Agent started: {user_message}")
 
     while True:
